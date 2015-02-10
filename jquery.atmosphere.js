@@ -37,6 +37,13 @@
 }(function(jQuery) {
 
     jQuery(window).bind("unload.atmosphere", function () {
+        jQuery.atmosphere.util.debug(new Date() + " Atmosphere: " + "unload event");
+        jQuery.atmosphere.unsubscribe();
+    });
+
+    // Temp fix for https://github.com/Atmosphere/atmosphere-javascript/issues/143
+    jQuery(window).bind("beforeunload.atmosphere", function () {
+        jQuery.atmosphere.util.debug(new Date() + " Atmosphere: " + "beforeunload event");
         jQuery.atmosphere.unsubscribe();
     });
 
@@ -80,7 +87,7 @@
     };
 
     jQuery.atmosphere = {
-        version: "2.2.6-jquery",
+        version: "2.2.7-jquery",
         uuid : 0,
         offline : false,
         requests: [],
@@ -336,11 +343,11 @@
             var _heartbeatPadding = ' ';
 
             /**
-             * {boolean} If request is currently aborded.
+             * {boolean} If request is currently aborted.
              *
              * @private
              */
-            var _abordingConnection = false;
+            var _abortingConnection = false;
 
             /**
              * A local "channel' of communication.
@@ -386,7 +393,7 @@
              */
             function _init() {
                 _subscribed = true;
-                _abordingConnection = false;
+                _abortingConnection = false;
                 _requestCount = 0;
 
                 _websocket = null;
@@ -421,6 +428,12 @@
                     return _request.logLevel === 'error' || _request.logLevel === 'warn' || _request.logLevel === 'info' || _request.logLevel === 'debug';
                 } else {
                     return false;
+                }
+            }
+
+            function _debug(msg) {
+                if (_canLog('debug')) {
+                    jQuery.atmosphere.debug(new Date() + " Atmosphere: " + msg);
                 }
             }
 
@@ -459,7 +472,27 @@
              * @private
              */
             function _supportSSE() {
-                return window.EventSource;
+                function makeAbsolute(url) {
+                    var div = document.createElement("div");
+                    // Uses an innerHTML property to obtain an absolute URL
+                    div.innerHTML = '<a href="' + url + '"/>';
+                    // encodeURI and decodeURI are needed to normalize URL between Internet Explorer and non-Internet Explorer,
+                    // since Internet Explorer doesn't encode the href property value and return it - http://jsfiddle.net/Yq9M8/1/
+                    return encodeURI(decodeURI(div.firstChild.href));
+                }
+                
+                // Origin parts
+                var url = makeAbsolute(_request.url.toLowerCase());
+                var parts = /^([\w\+\.\-]+:)(?:\/\/([^\/?#:]*)(?::(\d+))?)?/.exec(url);
+                var crossOrigin = !!(parts && (
+                    // protocol
+                    parts[1] != window.location.protocol ||
+                    // hostname
+                    parts[2] != window.location.hostname ||
+                    // port
+                    (parts[3] || (parts[1] === "http:" ? 80 : 443)) != (window.location.port || (window.location.protocol === "http:" ? 80 : 443))
+                ));
+                return window.EventSource && (!crossOrigin || !jQuery.browser.safari || jQuery.browser.vmajor >= 7);
             }
 
             /**
@@ -703,7 +736,7 @@
                     },
                     close: function () {
                         // Do not signal the parent if this method is executed by the unload event handler
-                        if (!_abordingConnection) {
+                        if (!_abortingConnection) {
                             clearInterval(_traceTimer);
                             connector.signal("close");
                             connector.close();
@@ -951,10 +984,6 @@
                             if (rq.maxRequest === -1 || rq.requestCount++ < rq.maxRequest) {
                                 _readHeaders(_jqxhr, rq);
 
-                                if (!rq.executeCallbackBeforeReconnect) {
-                                    _reconnect(_jqxhr, rq, rq.pollingInterval);
-                                }
-
                                 var msg = json.message;
                                 if (msg != null && typeof msg !== 'string') {
                                     try {
@@ -965,6 +994,11 @@
                                 }
 
                                 var skipCallbackInvocation = _trackMessageSize(msg, rq, _response);
+
+                                if (!rq.executeCallbackBeforeReconnect) {
+                                    _reconnect(_jqxhr, rq, rq.pollingInterval);
+                                }
+
                                 if (!skipCallbackInvocation) {
                                     _prepareCallback(_response.responseBody, "messageReceived", 200, rq.transport);
                                 }
@@ -1138,6 +1172,7 @@
                 }
 
                 _sse.onopen = function (event) {
+                    _debug("websocket.onopen");
                     _timeout(_request);
                     if (_canLog('debug')) {
                         jQuery.atmosphere.debug("SSE successfully opened");
@@ -1162,6 +1197,7 @@
                 };
 
                 _sse.onmessage = function (message) {
+                    _debug("websocket.onmessage");
                     _timeout(_request);
                     if (!_request.enableXDR && message.origin !== window.location.protocol + "//" + window.location.host) {
                         jQuery.atmosphere.log(_request.logLevel, ["Origin was not " + window.location.protocol + "//" + window.location.host]);
@@ -1181,6 +1217,7 @@
                 };
 
                 _sse.onerror = function (message) {
+                    _debug("websocket.onerror");
                     clearTimeout(_request.id);
 
                     if (_request.heartbeatTimer) {
@@ -1194,7 +1231,7 @@
                     _invokeClose(sseOpened);
                     _clearState();
 
-                    if (_abordingConnection) {
+                    if (_abortingConnection) {
                         jQuery.atmosphere.log(_request.logLevel, ["SSE closed normally"]);
                     } else if (!sseOpened) {
                         _reconnectWithFallbackTransport("SSE failed. Downgrading to fallback transport and resending");
@@ -1266,6 +1303,7 @@
                 }
 
                 _websocket.onopen = function (message) {
+                    _debug("websocket.onopen");
                     _timeout(_request);
                     if (_canLog('debug')) {
                         jQuery.atmosphere.debug("Websocket successfully opened");
@@ -1296,6 +1334,7 @@
                 };
 
                 _websocket.onmessage = function (message) {
+                    _debug("websocket.onmessage: "+message);
                     _timeout(_request);
 
                     // We only consider it opened if we get the handshake data
@@ -1328,6 +1367,7 @@
                 };
 
                 _websocket.onerror = function (message) {
+                    _debug("websocket.onerror");
                     clearTimeout(_request.id);
 
                     if (_request.heartbeatTimer) {
@@ -1336,6 +1376,7 @@
                 };
 
                 _websocket.onclose = function (message) {
+                    _debug("websocket.onclose");
                     if (_response.state === 'closed')
                         return;
                     clearTimeout(_request.id);
@@ -1344,7 +1385,7 @@
                     if (reason === "") {
                         switch (message.code) {
                             case 1000:
-                                reason = "Normal closure; the connection successfully completed whatever purpose for which " + "it was created.";
+                                reason = "Normal closure; the connection successfully completed whatever purpose for which it was created.";
                                 break;
                             case 1001:
                                 reason = "The endpoint is going away, either because of a server failure or because the "
@@ -1358,7 +1399,7 @@
                                     + "cannot accept (for example, a text-only endpoint received binary data).";
                                 break;
                             case 1004:
-                                reason = "The endpoint is terminating the connection because a data frame was received that " + "is too large.";
+                                reason = "The endpoint is terminating the connection because a data frame was received that is too large.";
                                 break;
                             case 1005:
                                 reason = "Unknown: no status code was provided even though one was expected.";
@@ -1386,7 +1427,7 @@
 
                     _response.state = 'closed';
 
-                    if (_abordingConnection) {
+                    if (_abortingConnection) {
                         jQuery.atmosphere.log(_request.logLevel, ["Websocket closed normally"]);
                     } else if (!webSocketOpened) {
                         _reconnectWithFallbackTransport("Websocket failed. Downgrading to Comet and resending");
@@ -1431,7 +1472,7 @@
                 var nMessage = message;
                 if (request.transport === 'polling') return nMessage;
 
-                if (jQuery.trim(message).length !== 0 && request.enableProtocol && request.firstMessage) {
+                if (request.enableProtocol && request.firstMessage && jQuery.trim(message).length !== 0) {
                     var pos = request.trackMessageLength ? 1 : 0;
                     var messages = message.split(request.messageDelimiter);
 
@@ -1738,9 +1779,9 @@
                     }
                 }
 
-                var reconnectF = function () {
+                var reconnectF = function (force) {
                     rq.lastIndex = 0;
-                    if (rq.reconnect && _requestCount++ < rq.maxReconnectOnClose) {
+                    if (force || (rq.reconnect && _requestCount++ < rq.maxReconnectOnClose)) {
                         _response.ffTryingReconnect = true;
                         _open('re-connecting', request.transport, request);
                         _reconnect(ajaxRequest, rq, request.reconnectInterval);
@@ -1753,7 +1794,7 @@
                     // Prevent onerror callback to be called
                     _response.errorHandled = true;
                     _clearState();
-                    reconnectF();
+                    reconnectF(false);
                 };
 
                 if (rq.reconnect && (rq.maxRequest === -1 || rq.requestCount++ < rq.maxRequest)) {
@@ -1770,10 +1811,12 @@
                         _response.transport = rq.transport;
 
                         ajaxRequest.onabort = function () {
+                            _debug("ajaxrequest.onabort");
                             _invokeClose(true);
                         };
 
                         ajaxRequest.onerror = function () {
+                            _debug("ajaxrequest.onerror");
                             _response.error = true;
                             _response.ffTryingReconnect = true;
                             try {
@@ -1787,13 +1830,14 @@
                             }
                             if (!_response.errorHandled) {
                                 _clearState();
-                                reconnectF();
+                                reconnectF(false);
                             }
                         };
                     }
 
                     ajaxRequest.onreadystatechange = function () {
-                        if (_abordingConnection) {
+                        _debug("ajaxRequest.onreadystatechange, new state: "+ajaxRequest.readyState);
+                        if (_abortingConnection) {
                             return;
                         }
 
@@ -1803,7 +1847,7 @@
 
                         if (rq.transport === 'streaming' && rq.readyState > 2 && ajaxRequest.readyState === 4) {
                             _clearState();
-                            reconnectF();
+                            reconnectF(false);
                             return;
                         }
 
@@ -1836,8 +1880,8 @@
                             // Firefox incorrectly send statechange 0->2 when a reconnect attempt fails. The above checks ensure that onopen is not called for these
                             if ((!rq.enableProtocol || !request.firstMessage) && ajaxRequest.readyState === 2) {
                                 // Firefox incorrectly send statechange 0->2 when a reconnect attempt fails. The above checks ensure that onopen is not called for these
-                                // In that case, ajaxRequest.onerror will be called just after onreadystatechange is called, so we delay the trigger untill we are
-                                // garantee the connection is well established.
+                                // In that case, ajaxRequest.onerror will be called just after onreadystatechange is called, so we delay the trigger until we are
+                                // guarantee the connection is well established.
                                 if (jQuery.browser.mozilla && _response.ffTryingReconnect) {
                                     _response.ffTryingReconnect = false;
                                     setTimeout(function(){
@@ -1855,10 +1899,10 @@
                         if (update) {
                             var responseText = ajaxRequest.responseText;
 
-                            if (jQuery.trim(responseText).length === 0 && rq.transport === 'long-polling') {
+                            if (rq.transport === 'long-polling' && jQuery.trim(responseText).length === 0) {
                                 // For browser that aren't support onabort
                                 if (!ajaxRequest.hasData) {
-                                    _reconnect(ajaxRequest, rq, rq.pollingInterval);
+                                    reconnectF(true);
                                 } else {
                                     ajaxRequest.hasData = false;
                                 }
@@ -1963,7 +2007,7 @@
                 _response.messages = [];
                 rq.isReopen = true;
                 _close();
-                _abordingConnection = false;
+                _abortingConnection = false;
                 _reconnect(ajaxRequest, rq, 500);
             }
 
@@ -2377,7 +2421,7 @@
                     _pushWebSocket(message);
                 } else {
                     _onError(0, "No suspended connection available");
-                    jQuery.atmosphere.error("No suspended connection available. Make sure atmosphere.subscribe has been called and request.onOpen invoked before invoking this method");
+                    jQuery.atmosphere.error("No suspended connection available. Make sure atmosphere.subscribe has been called and request.onOpen invoked before invoking trying to push data");
                 }
             }
 
@@ -2573,37 +2617,45 @@
             function _f(response, f) {
                 switch (response.state) {
                     case "messageReceived":
+                        _debug("Firing onMessage");
                         _requestCount = 0;
                         if (typeof (f.onMessage) !== 'undefined')
                             f.onMessage(response);
                         break;
                     case "error":
+                        _debug("Firing onError");
                         if (typeof (f.onError) !== 'undefined')
                             f.onError(response);
                         break;
                     case "opening":
+                        _debug("Firing onOpen");
                         delete _request.closed;
                         if (typeof (f.onOpen) !== 'undefined')
                             f.onOpen(response);
                         break;
                     case "messagePublished":
+                        _debug("Firing onMessagePublished");
                         if (typeof (f.onMessagePublished) !== 'undefined')
                             f.onMessagePublished(response);
                         break;
                     case "re-connecting":
+                        _debug("Firing onReconnect");
                         if (typeof (f.onReconnect) !== 'undefined')
                             f.onReconnect(_request, response);
                         break;
                     case "closedByClient":
+                        _debug("Firing onClientTimeout");
                         if (typeof (f.onClientTimeout) !== 'undefined')
                             f.onClientTimeout(_request);
                         break;
                     case "re-opening":
+                        _debug("Firing onReopen");
                         delete _request.closed;
                         if (typeof (f.onReopen) !== 'undefined')
                             f.onReopen(_request, response);
                         break;
                     case "fail-to-reconnect":
+                        _debug("Firing onFailureToReconnect");
                         if (typeof (f.onFailureToReconnect) !== 'undefined')
                             f.onFailureToReconnect(_request, response);
                         break;
@@ -2611,9 +2663,12 @@
                     case "closed":
                         var closed = typeof (_request.closed) !== 'undefined' ? _request.closed : false;
                         if (!closed) {
+                            _debug("Firing onClose");
                             if (typeof (f.onClose) !== 'undefined') {
                                 f.onClose(response);
                             }
+                        } else {
+                            _debug("Closed but not firing onClose");
                         }
 
                         _request.closed = true;
@@ -2761,7 +2816,7 @@
                 }
 
                 _request.reconnect = false;
-                _abordingConnection = true;
+                _abortingConnection = true;
                 _response.request = _request;
                 _response.state = 'unsubscribe';
                 _response.responseBody = "";
@@ -2817,7 +2872,7 @@
                     // The heir is the parent unless unloading
                     _storageService.signal("close", {
                         reason: "",
-                        heir: !_abordingConnection ? guid : (_storageService.get("children") || [])[0]
+                        heir: !_abortingConnection ? guid : (_storageService.get("children") || [])[0]
                     });
                     _storageService.close();
                 }
@@ -2876,7 +2931,7 @@
 
             this.init = function () {
                 _init();
-            }
+            };
 
             this.request = _request;
             this.response = _response;
@@ -3100,13 +3155,18 @@
             ua = ua.toLowerCase();
 	
             var match = /(chrome)[ \/]([\w.]+)/.exec(ua) || 
-                    /(webkit)[ \/]([\w.]+)/.exec(ua) || 
                     /(opera)(?:.*version|)[ \/]([\w.]+)/.exec(ua) || 
                     /(msie) ([\w.]+)/.exec(ua) || 
-                    /(trident)(?:.*? rv:([\w.]+)|)/.exec(ua) ||
+                    /(trident)(?:.*? rv:([\w.]+)|)/.exec(ua) || 
+                    ua.indexOf("android") < 0 && /version\/(.+) (safari)/.exec(ua) ||
                     ua.indexOf("compatible") < 0 && /(mozilla)(?:.*? rv:([\w.]+)|)/.exec(ua) || 
                     [];
-	
+
+            // Swaps variables
+            if (match[2] === "safari") {
+                match[2] = match[1];
+                match[1] = "safari";
+            }
             return {
                 browser: match[1] || "",
                 version: match[2] || "0"
@@ -3119,13 +3179,7 @@
         if (matched.browser) {
             browser[matched.browser] = true;
             browser.version = matched.version;
-        }
-	
-        // Chrome is Webkit, but Webkit is also Safari.
-        if (browser.chrome) {
-            browser.webkit = true;
-        } else if (browser.webkit) {
-            browser.safari = true;
+            browser.vmajor = browser.version.split(".")[0];
         }
         
         // Trident is the layout engine of the Internet Explorer
