@@ -1,8 +1,31 @@
 {
-  "main": "jquery.atmosphere.js", 
-  "version": "2.2.10" 
+  "main": "jquery.atmosphere.js",
+  "version": "2.2.10",
   "dependencies": {
     "jquery": ">= 1.9.0"
-  }, 
-  "name": "jquery-atmosphere"
+  },
+  "name": "jquery-atmosphere",
+  "homepage": "https://github.com/Atmosphere/bower-jquery-atmosphere",
+  "authors": [
+    "jfarcand <jfarcand@apache.org>"
+  ],
+  "description": "Atmosphere Javascript Client for JQuery",
+  "moduleType": [
+    "amd",
+    "node",
+    "yui"
+  ],
+  "keywords": [
+    "atmosphere",
+    "websocket",
+    "async"
+  ],
+  "license": "Apache",
+  "ignore": [
+    "**/.*",
+    "node_modules",
+    "bower_components",
+    "test",
+    "tests"
+  ]
 }
