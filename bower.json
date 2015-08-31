@@ -1,6 +1,6 @@
 {
   "main": "jquery.atmosphere.js",
-  "version": "2.2.10",
+  "version": "2.2.12",
   "dependencies": {
     "jquery": ">= 1.9.0"
   },
